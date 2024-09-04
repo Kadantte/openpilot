@@ -1,46 +1,50 @@
 openpilot in simulator
 =====================
 
-openpilot implements a [bridge](bridge.py) that allows it to run in the [CARLA simulator](https://carla.org/). 
+openpilot implements a [bridge](run_bridge.py) that allows it to run in the [MetaDrive simulator](https://github.com/metadriverse/metadrive).
 
-## System Requirements
-
-openpilot doesn't have any extreme hardware requirements, however CARLA requires an NVIDIA graphics card and is very resource-intensive and may not run smoothly on your system. For this case, we have a low quality mode you can activate by running:
-```
-./start_openpilot_docker.sh --low_quality
-```
-
-You can also check out the [CARLA python documentation](https://carla.readthedocs.io/en/latest/python_api/) to find more parameters to tune that might increase performance on your system.
-
-## Running the simulator
-
-First, start the CARLA server in one terminal.
-```
-./start_carla.sh
+## Launching openpilot
+First, start openpilot.
+``` bash
+# Run locally
+./tools/sim/launch_openpilot.sh
 ```
 
-Then, start the bridge and openpilot in another terminal.
+## Bridge usage
 ```
-./start_openpilot_docker.sh
+$ ./run_bridge.py -h
+usage: run_bridge.py [-h] [--joystick] [--high_quality] [--dual_camera]
+Bridge between the simulator and openpilot.
+
+options:
+  -h, --help            show this help message and exit
+  --joystick
+  --high_quality
+  --dual_camera
 ```
 
-To engage openpilot press 1 a few times while focused on bridge.py to increase the cruise speed.
+#### Bridge Controls:
+- To engage openpilot press 2, then press 1 to increase the speed and 2 to decrease.
+- To disengage, press "S" (simulates a user brake)
 
-## Controls
+#### All inputs:
 
-You can control openpilot driving in the simulation with the following keys
+```
+| key  |   functionality       |
+|------|-----------------------|
+|  1   | Cruise Resume / Accel |
+|  2   | Cruise Set    / Decel |
+|  3   | Cruise Cancel         |
+|  r   | Reset Simulation      |
+|  i   | Toggle Ignition       |
+|  q   | Exit all              |
+| wasd | Control manually      |
+```
 
-|  key  |   functionality   |
-| :---: | :---------------: |
-|   1   |  Cruise up 5 mph  |
-|   2   | Cruise down 5 mph |
-|   3   |   Cruise cancel   |
-|   q   |     Exit all      |
+## MetaDrive
 
-To see the options for changing the environment, such as the town, spawn point or precipitation, you can run `./start_openpilot_docker.sh --help`.
-This will print the help output inside the docker container. You need to exit the docker container before running `./start_openpilot_docker.sh` again.
-
-## Further Reading
-
-The following resources contain more details and troubleshooting tips.
-* [CARLA on the openpilot wiki](https://github.com/commaai/openpilot/wiki/CARLA)
+### Launching Metadrive
+Start bridge processes located in tools/sim:
+``` bash
+./run_bridge.py
+```

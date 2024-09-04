@@ -1,8 +1,5 @@
 /*
- * Copyright 2019 Gianluca Frison, Dimitris Kouzoupis, Robin Verschueren,
- * Andrea Zanelli, Niels van Duijkeren, Jonathan Frey, Tommaso Sartor,
- * Branimir Novoselnik, Rien Quirynen, Rezart Qelibari, Dang Doan,
- * Jonas Koenemann, Yutao Chen, Tobias Schöls, Jonas Schlagenhauf, Moritz Diehl
+ * Copyright (c) The acados authors.
  *
  * This file is part of acados.
  *
@@ -72,6 +69,7 @@ typedef struct
     void (*memory_get)(void *config_, void *mem_, const char *field, void* value);
     acados_size_t (*workspace_calculate_size)(void *config, void *dims, void *opts);
     int (*evaluate)(void *config, void *qp_in, void *qp_out, void *opts, void *mem, void *work);
+    void (*memory_reset)(void *config, void *qp_in, void *qp_out, void *opts, void *mem, void *work);
     void (*eval_sens)(void *config, void *qp_in, void *qp_out, void *opts, void *mem, void *work);
 } qp_solver_config;
 #endif

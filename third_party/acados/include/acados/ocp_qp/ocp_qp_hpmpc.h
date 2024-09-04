@@ -1,8 +1,5 @@
 /*
- * Copyright 2019 Gianluca Frison, Dimitris Kouzoupis, Robin Verschueren,
- * Andrea Zanelli, Niels van Duijkeren, Jonathan Frey, Tommaso Sartor,
- * Branimir Novoselnik, Rien Quirynen, Rezart Qelibari, Dang Doan,
- * Jonas Koenemann, Yutao Chen, Tobias Schöls, Jonas Schlagenhauf, Moritz Diehl
+ * Copyright (c) The acados authors.
  *
  * This file is part of acados.
  *
@@ -99,6 +96,7 @@ typedef struct ocp_qp_hpmpc_memory_
 
     double time_qp_solver_call;
     int iter;
+    int status;
 
 } ocp_qp_hpmpc_memory;
 

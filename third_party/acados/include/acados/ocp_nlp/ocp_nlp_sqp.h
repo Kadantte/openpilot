@@ -1,8 +1,5 @@
 /*
- * Copyright 2019 Gianluca Frison, Dimitris Kouzoupis, Robin Verschueren,
- * Andrea Zanelli, Niels van Duijkeren, Jonathan Frey, Tommaso Sartor,
- * Branimir Novoselnik, Rien Quirynen, Rezart Qelibari, Dang Doan,
- * Jonas Koenemann, Yutao Chen, Tobias Schöls, Jonas Schlagenhauf, Moritz Diehl
+ * Copyright (c) The acados authors.
  *
  * This file is part of acados.
  *
@@ -122,7 +119,9 @@ typedef struct
 acados_size_t ocp_nlp_sqp_memory_calculate_size(void *config, void *dims, void *opts_);
 //
 void *ocp_nlp_sqp_memory_assign(void *config, void *dims, void *opts_, void *raw_memory);
-
+//
+void ocp_nlp_sqp_memory_reset_qp_solver(void *config_, void *dims_, void *nlp_in_, void *nlp_out_,
+    void *opts_, void *mem_, void *work_);
 
 
 /************************************************

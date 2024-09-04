@@ -1,13 +1,10 @@
 #include "selfdrive/modeld/models/commonmodel.h"
 
-#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstring>
 
-#include "selfdrive/common/clutil.h"
-#include "selfdrive/common/mat.h"
-#include "selfdrive/common/timing.h"
+#include "common/clutil.h"
 
 ModelFrame::ModelFrame(cl_device_id device_id, cl_context context) {
   input_frames = std::make_unique<float[]>(buf_size);
@@ -22,9 +19,9 @@ ModelFrame::ModelFrame(cl_device_id device_id, cl_context context) {
   loadyuv_init(&loadyuv, context, device_id, MODEL_WIDTH, MODEL_HEIGHT);
 }
 
-float* ModelFrame::prepare(cl_mem yuv_cl, int frame_width, int frame_height, const mat3 &projection, cl_mem *output) {
+float* ModelFrame::prepare(cl_mem yuv_cl, int frame_width, int frame_height, int frame_stride, int frame_uv_offset, const mat3 &projection, cl_mem *output) {
   transform_queue(&this->transform, q,
-                  yuv_cl, frame_width, frame_height,
+                  yuv_cl, frame_width, frame_height, frame_stride, frame_uv_offset,
                   y_cl, u_cl, v_cl, MODEL_WIDTH, MODEL_HEIGHT, projection);
 
   if (output == NULL) {
@@ -50,21 +47,6 @@ ModelFrame::~ModelFrame() {
   CL_CHECK(clReleaseMemObject(u_cl));
   CL_CHECK(clReleaseMemObject(y_cl));
   CL_CHECK(clReleaseCommandQueue(q));
-}
-
-void softmax(const float* input, float* output, size_t len) {
-  const float max_val = *std::max_element(input, input + len);
-  float denominator = 0;
-  for(int i = 0; i < len; i++) {
-    float const v_exp = expf(input[i] - max_val);
-    denominator += v_exp;
-    output[i] = v_exp;
-  }
-
-  const float inv_denominator = 1. / denominator;
-  for(int i = 0; i < len; i++) {
-    output[i] *= inv_denominator;
-  }
 }
 
 float sigmoid(float input) {

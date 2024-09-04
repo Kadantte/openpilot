@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <map>
+#include <string>
 
 #include <QDebug>
 #include <QDir>
@@ -25,20 +26,15 @@ const std::string GIT_URL = get_str("https://github.com/commaai/openpilot.git" "
 const std::string BRANCH_STR = get_str(BRANCH "?                                                                ");
 
 #define GIT_SSH_URL "git@github.com:commaai/openpilot.git"
-
-#ifdef QCOM
-  #define CONTINUE_PATH "/data/data/com.termux/files/continue.sh"
-#else
-  #define CONTINUE_PATH "/data/continue.sh"
-#endif
+#define CONTINUE_PATH "/data/continue.sh"
 
 const QString CACHE_PATH = "/data/openpilot.cache";
 
 #define INSTALL_PATH "/data/openpilot"
 #define TMP_INSTALL_PATH "/data/tmppilot"
 
-extern const uint8_t str_continue[] asm("_binary_selfdrive_ui_installer_continue_" BRAND "_sh_start");
-extern const uint8_t str_continue_end[] asm("_binary_selfdrive_ui_installer_continue_" BRAND "_sh_end");
+extern const uint8_t str_continue[] asm("_binary_selfdrive_ui_installer_continue_openpilot_sh_start");
+extern const uint8_t str_continue_end[] asm("_binary_selfdrive_ui_installer_continue_openpilot_sh_end");
 
 bool time_valid() {
   time_t rawtime;
@@ -58,7 +54,7 @@ Installer::Installer(QWidget *parent) : QWidget(parent) {
   layout->setContentsMargins(150, 290, 150, 150);
   layout->setSpacing(0);
 
-  QLabel *title = new QLabel("Installing...");
+  QLabel *title = new QLabel(tr("Installing..."));
   title->setStyleSheet("font-size: 90px; font-weight: 600;");
   layout->addWidget(title, 0, Qt::AlignTop);
 
@@ -112,7 +108,7 @@ void Installer::doInstall() {
     qDebug() << "Waiting for valid time";
   }
 
-  // cleanup previous install attemps
+  // cleanup previous install attempts
   run("rm -rf " TMP_INSTALL_PATH " " INSTALL_PATH);
 
   // do the install
@@ -184,10 +180,12 @@ void Installer::cloneFinished(int exitCode, QProcess::ExitStatus exitStatus) {
 #ifdef INTERNAL
   run("mkdir -p /data/params/d/");
 
+  // https://github.com/commaci2.keys
+  const std::string ssh_keys = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMX2kU8eBZyEWmbq0tjMPxksWWVuIV/5l64GabcYbdpI";
   std::map<std::string, std::string> params = {
     {"SshEnabled", "1"},
     {"RecordFrontLock", "1"},
-    {"GithubSshKeys", SSH_KEYS},
+    {"GithubSshKeys", ssh_keys},
   };
   for (const auto& [key, value] : params) {
     std::ofstream param;
@@ -212,12 +210,8 @@ void Installer::cloneFinished(int exitCode, QProcess::ExitStatus exitStatus) {
   run("chmod +x /data/continue.sh.new");
   run("mv /data/continue.sh.new " CONTINUE_PATH);
 
-#ifdef QCOM
-  QTimer::singleShot(100, &QCoreApplication::quit);
-#else
   // wait for the installed software's UI to take over
   QTimer::singleShot(60 * 1000, &QCoreApplication::quit);
-#endif
 }
 
 int main(int argc, char *argv[]) {

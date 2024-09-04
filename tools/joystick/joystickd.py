@@ -1,12 +1,16 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import os
 import argparse
+import threading
 from inputs import get_gamepad
 
 import cereal.messaging as messaging
-from common.numpy_fast import interp, clip
-from common.params import Params
-from tools.lib.kbhit import KBHit
+from openpilot.common.realtime import Ratekeeper
+from openpilot.common.numpy_fast import interp, clip
+from openpilot.common.params import Params
+from openpilot.tools.lib.kbhit import KBHit
+
+JS_EXPO = 0.4
 
 
 class Keyboard:
@@ -16,6 +20,8 @@ class Keyboard:
     self.axes_map = {'w': 'gb', 's': 'gb',
                      'a': 'steer', 'd': 'steer'}
     self.axes_values = {'gb': 0., 'steer': 0.}
+    self.axes_order = ['gb', 'steer']
+    self.cancel = False
 
   def update(self):
     key = self.kb.getch().lower()
@@ -35,46 +41,61 @@ class Keyboard:
 
 class Joystick:
   def __init__(self):
-    self.min_axis_value = 0
-    self.max_axis_value = 255
-    self.cancel_button = 'BTN_TRIGGER'
-    self.axes_values = {'ABS_Y': 0., 'ABS_RZ': 0.}  # gb, steer
+    # This class supports a PlayStation 5 DualSense controller on the comma 3X
+    # TODO: find a way to get this from API or detect gamepad/PC, perhaps "inputs" doesn't support it
+    # TODO: the mapping can also be wrong on PC depending on the driver
+    self.cancel_button = 'BTN_NORTH'  # BTN_NORTH=X/triangle
+    accel_axis = 'ABS_Y'
+    steer_axis = 'ABS_Z'
+    self.min_axis_value = {accel_axis: 0., steer_axis: 0.}
+    self.max_axis_value = {accel_axis: 255., steer_axis: 255.}
+    self.axes_values = {accel_axis: 0., steer_axis: 0.}
+    self.axes_order = [accel_axis, steer_axis]
+    self.cancel = False
 
   def update(self):
     joystick_event = get_gamepad()[0]
     event = (joystick_event.code, joystick_event.state)
-    self.cancel = False
-    if event[0] == self.cancel_button and event[1] == 0:  # state 0 is falling edge
-      self.cancel = True
+    if event[0] == self.cancel_button:
+      if event[1] == 1:
+        self.cancel = True
+      elif event[1] == 0:   # state 0 is falling edge
+        self.cancel = False
     elif event[0] in self.axes_values:
-      self.max_axis_value = max(event[1], self.max_axis_value)
-      self.min_axis_value = min(event[1], self.min_axis_value)
+      self.max_axis_value[event[0]] = max(event[1], self.max_axis_value[event[0]])
+      self.min_axis_value[event[0]] = min(event[1], self.min_axis_value[event[0]])
 
-      norm = -interp(event[1], [self.min_axis_value, self.max_axis_value], [-1., 1.])
-      self.axes_values[event[0]] = norm if abs(norm) > 0.05 else 0.  # center can be noisy, deadzone of 5%
+      norm = -interp(event[1], [self.min_axis_value[event[0]], self.max_axis_value[event[0]]], [-1., 1.])
+      norm = norm if abs(norm) > 0.02 else 0.  # center can be noisy, deadzone of 2%
+      self.axes_values[event[0]] = JS_EXPO * norm ** 3 + (1 - JS_EXPO) * norm  # less action near center for fine control
     else:
       return False
     return True
 
 
-def joystick_thread(use_keyboard):
-  Params().put_bool('JoystickDebugMode', True)
+def send_thread(joystick):
   joystick_sock = messaging.pub_sock('testJoystick')
-  joystick = Keyboard() if use_keyboard else Joystick()
+  rk = Ratekeeper(100, print_delay_threshold=None)
+  while 1:
+    dat = messaging.new_message('testJoystick')
+    dat.testJoystick.axes = [joystick.axes_values[a] for a in joystick.axes_order]
+    dat.testJoystick.buttons = [joystick.cancel]
+    joystick_sock.send(dat.to_bytes())
+    print('\n' + ', '.join(f'{name}: {round(v, 3)}' for name, v in joystick.axes_values.items()))
+    rk.keep_time()
 
+
+def joystick_thread(joystick):
+  Params().put_bool('JoystickDebugMode', True)
+  threading.Thread(target=send_thread, args=(joystick,), daemon=True).start()
   while True:
-    ret = joystick.update()
-    if ret:
-      dat = messaging.new_message('testJoystick')
-      dat.testJoystick.axes = [joystick.axes_values[a] for a in joystick.axes_values]
-      dat.testJoystick.buttons = [joystick.cancel]
-      joystick_sock.send(dat.to_bytes())
-      print('\n' + ', '.join(f'{name}: {round(v, 3)}' for name, v in joystick.axes_values.items()))
+    joystick.update()
 
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Publishes events from your joystick to control your car.\n' +
-                                               'openpilot must be offroad before starting joysticked.',
+                                               'openpilot must be offroad before starting joystickd. This tool supports ' +
+                                               'a PlayStation 5 DualSense controller on the comma 3X.',
                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter)
   parser.add_argument('--keyboard', action='store_true', help='Use your keyboard instead of a joystick')
   args = parser.parse_args()
@@ -92,5 +113,7 @@ if __name__ == '__main__':
     print('- `C`: Cancel cruise control')
   else:
     print('Using joystick, make sure to run cereal/messaging/bridge on your device if running over the network!')
+    print('If not running on a comma device, the mapping may need to be adjusted.')
 
-  joystick_thread(args.keyboard)
+  joystick = Keyboard() if args.keyboard else Joystick()
+  joystick_thread(joystick)

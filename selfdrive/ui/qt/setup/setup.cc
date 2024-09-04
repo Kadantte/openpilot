@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
+#include <string>
 
 #include <QApplication>
 #include <QLabel>
@@ -10,27 +11,47 @@
 
 #include <curl/curl.h>
 
-#include "selfdrive/common/util.h"
-#include "selfdrive/hardware/hw.h"
+#include "common/util.h"
+#include "system/hardware/hw.h"
 #include "selfdrive/ui/qt/api.h"
 #include "selfdrive/ui/qt/qt_window.h"
-#include "selfdrive/ui/qt/offroad/networking.h"
+#include "selfdrive/ui/qt/network/networking.h"
+#include "selfdrive/ui/qt/util.h"
 #include "selfdrive/ui/qt/widgets/input.h"
 
 const std::string USER_AGENT = "AGNOSSetup-";
-const QString DASHCAM_URL = "https://dashcam.comma.ai";
+const QString OPENPILOT_URL = "https://openpilot.comma.ai";
+
+bool is_elf(char *fname) {
+  FILE *fp = fopen(fname, "rb");
+  if (fp == NULL) {
+    return false;
+  }
+  char buf[4];
+  size_t n = fread(buf, 1, 4, fp);
+  fclose(fp);
+  return n == 4 && buf[0] == 0x7f && buf[1] == 'E' && buf[2] == 'L' && buf[3] == 'F';
+}
 
 void Setup::download(QString url) {
+  // autocomplete incomplete urls
+  if (QRegularExpression("^([^/.]+)/([^/]+)$").match(url).hasMatch()) {
+    url.prepend("https://installer.comma.ai/");
+  }
+
   CURL *curl = curl_easy_init();
   if (!curl) {
-    emit finished(false);
+    emit finished(url, tr("Something went wrong. Reboot the device."));
     return;
   }
 
   auto version = util::read_file("/VERSION");
 
+  struct curl_slist *list = NULL;
+  list = curl_slist_append(list, ("X-openpilot-serial: " + Hardware::get_serial()).c_str());
+
   char tmpfile[] = "/tmp/installer_XXXXXX";
-  FILE *fp = fdopen(mkstemp(tmpfile), "w");
+  FILE *fp = fdopen(mkstemp(tmpfile), "wb");
 
   curl_easy_setopt(curl, CURLOPT_URL, url.toStdString().c_str());
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
@@ -38,18 +59,28 @@ void Setup::download(QString url) {
   curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
   curl_easy_setopt(curl, CURLOPT_USERAGENT, (USER_AGENT + version).c_str());
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
 
   int ret = curl_easy_perform(curl);
-
   long res_status = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res_status);
-  if (ret == CURLE_OK && res_status == 200) {
-    rename(tmpfile, "/tmp/installer");
-    emit finished(true);
+
+  if (ret != CURLE_OK || res_status != 200) {
+    emit finished(url, tr("Ensure the entered URL is valid, and the device’s internet connection is good."));
+  } else if (!is_elf(tmpfile)) {
+    emit finished(url, tr("No custom software found at this URL."));
   } else {
-    emit finished(false);
+    rename(tmpfile, "/tmp/installer");
+
+    FILE *fp_url = fopen("/tmp/installer_url", "w");
+    fprintf(fp_url, "%s", url.toStdString().c_str());
+    fclose(fp_url);
+
+    emit finished(url);
   }
 
+  curl_slist_free_all(list);
   curl_easy_cleanup(curl);
   fclose(fp);
 }
@@ -70,13 +101,13 @@ QWidget * Setup::low_voltage() {
   inner_layout->addWidget(triangle, 0, Qt::AlignTop | Qt::AlignLeft);
   inner_layout->addSpacing(80);
 
-  QLabel *title = new QLabel("WARNING: Low Voltage");
+  QLabel *title = new QLabel(tr("WARNING: Low Voltage"));
   title->setStyleSheet("font-size: 90px; font-weight: 500; color: #FF594F;");
   inner_layout->addWidget(title, 0, Qt::AlignTop | Qt::AlignLeft);
 
   inner_layout->addSpacing(25);
 
-  QLabel *body = new QLabel("Power your device in a car with a harness or proceed at your own risk.");
+  QLabel *body = new QLabel(tr("Power your device in a car with a harness or proceed at your own risk."));
   body->setWordWrap(true);
   body->setAlignment(Qt::AlignTop | Qt::AlignLeft);
   body->setStyleSheet("font-size: 80px; font-weight: 300;");
@@ -89,14 +120,14 @@ QWidget * Setup::low_voltage() {
   blayout->setSpacing(50);
   main_layout->addLayout(blayout, 0);
 
-  QPushButton *poweroff = new QPushButton("Power off");
+  QPushButton *poweroff = new QPushButton(tr("Power off"));
   poweroff->setObjectName("navBtn");
   blayout->addWidget(poweroff);
   QObject::connect(poweroff, &QPushButton::clicked, this, [=]() {
     Hardware::poweroff();
   });
 
-  QPushButton *cont = new QPushButton("Continue");
+  QPushButton *cont = new QPushButton(tr("Continue"));
   cont->setObjectName("navBtn");
   blayout->addWidget(cont);
   QObject::connect(cont, &QPushButton::clicked, this, &Setup::nextPage);
@@ -114,12 +145,12 @@ QWidget * Setup::getting_started() {
   vlayout->setContentsMargins(165, 280, 100, 0);
   main_layout->addLayout(vlayout);
 
-  QLabel *title = new QLabel("Getting Started");
+  QLabel *title = new QLabel(tr("Getting Started"));
   title->setStyleSheet("font-size: 90px; font-weight: 500;");
   vlayout->addWidget(title, 0, Qt::AlignTop | Qt::AlignLeft);
 
   vlayout->addSpacing(90);
-  QLabel *desc = new QLabel("Before we get on the road, let’s finish installation and cover some details.");
+  QLabel *desc = new QLabel(tr("Before we get on the road, let’s finish installation and cover some details."));
   desc->setWordWrap(true);
   desc->setStyleSheet("font-size: 80px; font-weight: 300;");
   vlayout->addWidget(desc, 0, Qt::AlignTop | Qt::AlignLeft);
@@ -144,7 +175,7 @@ QWidget * Setup::network_setup() {
   main_layout->setContentsMargins(55, 50, 55, 50);
 
   // title
-  QLabel *title = new QLabel("Connect to Wi-Fi");
+  QLabel *title = new QLabel(tr("Connect to Wi-Fi"));
   title->setStyleSheet("font-size: 90px; font-weight: 500;");
   main_layout->addWidget(title, 0, Qt::AlignLeft | Qt::AlignTop);
 
@@ -162,7 +193,7 @@ QWidget * Setup::network_setup() {
   main_layout->addLayout(blayout);
   blayout->setSpacing(50);
 
-  QPushButton *back = new QPushButton("Back");
+  QPushButton *back = new QPushButton(tr("Back"));
   back->setObjectName("navBtn");
   QObject::connect(back, &QPushButton::clicked, this, &Setup::prevPage);
   blayout->addWidget(back);
@@ -170,6 +201,7 @@ QWidget * Setup::network_setup() {
   QPushButton *cont = new QPushButton();
   cont->setObjectName("navBtn");
   cont->setProperty("primary", true);
+  cont->setEnabled(false);
   QObject::connect(cont, &QPushButton::clicked, this, &Setup::nextPage);
   blayout->addWidget(cont);
 
@@ -178,18 +210,18 @@ QWidget * Setup::network_setup() {
   QObject::connect(request, &HttpRequest::requestDone, [=](const QString &, bool success) {
     cont->setEnabled(success);
     if (success) {
-      const bool cell = networking->wifi->currentNetworkType() == NetworkType::CELL;
-      cont->setText(cell ? "Continue without Wi-Fi" : "Continue");
+      const bool wifi = networking->wifi->currentNetworkType() == NetworkType::WIFI;
+      cont->setText(wifi ? tr("Continue") : tr("Continue without Wi-Fi"));
     } else {
-      cont->setText("Waiting for internet");
+      cont->setText(tr("Waiting for internet"));
     }
     repaint();
   });
-  request->sendRequest(DASHCAM_URL);
+  request->sendRequest(OPENPILOT_URL);
   QTimer *timer = new QTimer(this);
   QObject::connect(timer, &QTimer::timeout, [=]() {
     if (!request->active() && cont->isVisible()) {
-      request->sendRequest(DASHCAM_URL);
+      request->sendRequest(OPENPILOT_URL);
     }
   });
   timer->start(1000);
@@ -235,22 +267,22 @@ QWidget * Setup::software_selection() {
   main_layout->setSpacing(0);
 
   // title
-  QLabel *title = new QLabel("Choose Software to Install");
+  QLabel *title = new QLabel(tr("Choose Software to Install"));
   title->setStyleSheet("font-size: 90px; font-weight: 500;");
   main_layout->addWidget(title, 0, Qt::AlignLeft | Qt::AlignTop);
 
   main_layout->addSpacing(50);
 
-  // dashcam + custom radio buttons
+  // openpilot + custom radio buttons
   QButtonGroup *group = new QButtonGroup(widget);
   group->setExclusive(true);
 
-  QWidget *dashcam = radio_button("Dashcam", group);
-  main_layout->addWidget(dashcam);
+  QWidget *openpilot = radio_button(tr("openpilot"), group);
+  main_layout->addWidget(openpilot);
 
   main_layout->addSpacing(30);
 
-  QWidget *custom = radio_button("Custom Software", group);
+  QWidget *custom = radio_button(tr("Custom Software"), group);
   main_layout->addWidget(custom);
 
   main_layout->addStretch();
@@ -260,12 +292,12 @@ QWidget * Setup::software_selection() {
   main_layout->addLayout(blayout);
   blayout->setSpacing(50);
 
-  QPushButton *back = new QPushButton("Back");
+  QPushButton *back = new QPushButton(tr("Back"));
   back->setObjectName("navBtn");
   QObject::connect(back, &QPushButton::clicked, this, &Setup::prevPage);
   blayout->addWidget(back);
 
-  QPushButton *cont = new QPushButton("Continue");
+  QPushButton *cont = new QPushButton(tr("Continue"));
   cont->setObjectName("navBtn");
   cont->setEnabled(false);
   cont->setProperty("primary", true);
@@ -276,9 +308,9 @@ QWidget * Setup::software_selection() {
     QTimer::singleShot(0, [=]() {
       setCurrentWidget(downloading_widget);
     });
-    QString url = DASHCAM_URL;
-    if (group->checkedButton() != dashcam) {
-      url = InputDialog::getText("Enter URL", this, "for Custom Software");
+    QString url = OPENPILOT_URL;
+    if (group->checkedButton() != openpilot) {
+      url = InputDialog::getText(tr("Enter URL"), this, tr("for Custom Software"));
     }
     if (!url.isEmpty()) {
       QTimer::singleShot(1000, this, [=]() {
@@ -300,25 +332,31 @@ QWidget * Setup::software_selection() {
 QWidget * Setup::downloading() {
   QWidget *widget = new QWidget();
   QVBoxLayout *main_layout = new QVBoxLayout(widget);
-  QLabel *txt = new QLabel("Downloading...");
+  QLabel *txt = new QLabel(tr("Downloading..."));
   txt->setStyleSheet("font-size: 90px; font-weight: 500;");
   main_layout->addWidget(txt, 0, Qt::AlignCenter);
   return widget;
 }
 
-QWidget * Setup::download_failed() {
+QWidget * Setup::download_failed(QLabel *url, QLabel *body) {
   QWidget *widget = new QWidget();
   QVBoxLayout *main_layout = new QVBoxLayout(widget);
-  main_layout->setContentsMargins(55, 225, 55, 55);
+  main_layout->setContentsMargins(55, 185, 55, 55);
   main_layout->setSpacing(0);
 
-  QLabel *title = new QLabel("Download Failed");
+  QLabel *title = new QLabel(tr("Download Failed"));
   title->setStyleSheet("font-size: 90px; font-weight: 500;");
   main_layout->addWidget(title, 0, Qt::AlignTop | Qt::AlignLeft);
 
   main_layout->addSpacing(67);
 
-  QLabel *body = new QLabel("Ensure the entered URL is valid, and the device’s internet connection is good.");
+  url->setWordWrap(true);
+  url->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  url->setStyleSheet("font-family: \"JetBrains Mono\"; font-size: 64px; font-weight: 400; margin-right: 100px;");
+  main_layout->addWidget(url);
+
+  main_layout->addSpacing(48);
+
   body->setWordWrap(true);
   body->setAlignment(Qt::AlignTop | Qt::AlignLeft);
   body->setStyleSheet("font-size: 80px; font-weight: 300; margin-right: 100px;");
@@ -331,19 +369,19 @@ QWidget * Setup::download_failed() {
   blayout->setSpacing(50);
   main_layout->addLayout(blayout, 0);
 
-  QPushButton *reboot = new QPushButton("Reboot device");
+  QPushButton *reboot = new QPushButton(tr("Reboot device"));
   reboot->setObjectName("navBtn");
   blayout->addWidget(reboot);
   QObject::connect(reboot, &QPushButton::clicked, this, [=]() {
     Hardware::reboot();
   });
 
-  QPushButton *restart = new QPushButton("Start over");
+  QPushButton *restart = new QPushButton(tr("Start over"));
   restart->setObjectName("navBtn");
   restart->setProperty("primary", true);
   blayout->addWidget(restart);
   QObject::connect(restart, &QPushButton::clicked, this, [=]() {
-    setCurrentIndex(2);
+    setCurrentIndex(1);
   });
 
   widget->setStyleSheet(R"(
@@ -363,6 +401,10 @@ void Setup::nextPage() {
 }
 
 Setup::Setup(QWidget *parent) : QStackedWidget(parent) {
+  if (std::getenv("MULTILANG")) {
+    selectLanguage();
+  }
+
   std::stringstream buffer;
   buffer << std::ifstream("/sys/class/hwmon/hwmon1/in1_input").rdbuf();
   float voltage = (float)std::atoi(buffer.str().c_str()) / 1000.;
@@ -377,15 +419,19 @@ Setup::Setup(QWidget *parent) : QStackedWidget(parent) {
   downloading_widget = downloading();
   addWidget(downloading_widget);
 
-  failed_widget = download_failed();
+  QLabel *url_label = new QLabel();
+  QLabel *body_label = new QLabel();
+  failed_widget = download_failed(url_label, body_label);
   addWidget(failed_widget);
 
-  QObject::connect(this, &Setup::finished, [=](bool success) {
-    // hide setup on success
-    qDebug() << "finished" << success;
-    if (success) {
+  QObject::connect(this, &Setup::finished, [=](const QString &url, const QString &error) {
+    qDebug() << "finished" << url << error;
+    if (error.isEmpty()) {
+      // hide setup on success
       QTimer::singleShot(3000, this, &QWidget::hide);
     } else {
+      url_label->setText(url);
+      body_label->setText(error);
       setCurrentWidget(failed_widget);
     }
   });
@@ -420,6 +466,18 @@ Setup::Setup(QWidget *parent) : QStackedWidget(parent) {
       background-color: #3049F4;
     }
   )");
+}
+
+void Setup::selectLanguage() {
+  QMap<QString, QString> langs = getSupportedLanguages();
+  QString selection = MultiOptionDialog::getSelection(tr("Select a language"), langs.keys(), "", this);
+  if (!selection.isEmpty()) {
+    QString selectedLang = langs[selection];
+    Params().put("LanguageSetting", selectedLang.toStdString());
+    if (translator.load(":/" + selectedLang)) {
+      qApp->installTranslator(&translator);
+    }
+  }
 }
 
 int main(int argc, char *argv[]) {

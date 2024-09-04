@@ -1,8 +1,5 @@
 /*
- * Copyright 2019 Gianluca Frison, Dimitris Kouzoupis, Robin Verschueren,
- * Andrea Zanelli, Niels van Duijkeren, Jonathan Frey, Tommaso Sartor,
- * Branimir Novoselnik, Rien Quirynen, Rezart Qelibari, Dang Doan,
- * Jonas Koenemann, Yutao Chen, Tobias Schöls, Jonas Schlagenhauf, Moritz Diehl
+ * Copyright (c) The acados authors.
  *
  * This file is part of acados.
  *
@@ -93,6 +90,7 @@ typedef struct ocp_nlp_config
                             char *field, int stage, int index, void *sens_nlp_out);
     // prepare memory
     int (*precompute)(void *config, void *dims, void *nlp_in, void *nlp_out, void *opts_, void *mem, void *work);
+    void (*memory_reset_qp_solver)(void *config, void *dims, void *nlp_in, void *nlp_out, void *opts_, void *mem, void *work);
     // initalize this struct with default values
     void (*config_initialize_default)(void *config);
     // general getter
@@ -306,6 +304,7 @@ typedef struct ocp_nlp_res
     struct blasfeo_dvec *res_eq;  // dynamics
     struct blasfeo_dvec *res_ineq;  // inequality constraints
     struct blasfeo_dvec *res_comp;  // complementarity
+    struct blasfeo_dvec tmp;  // tmp
     double inf_norm_res_stat;
     double inf_norm_res_eq;
     double inf_norm_res_ineq;
@@ -402,7 +401,7 @@ ocp_nlp_workspace *ocp_nlp_workspace_assign(ocp_nlp_config *config, ocp_nlp_dims
 void ocp_nlp_alias_memory_to_submodules(ocp_nlp_config *config, ocp_nlp_dims *dims, ocp_nlp_in *in,
             ocp_nlp_out *out, ocp_nlp_opts *opts, ocp_nlp_memory *mem, ocp_nlp_workspace *work);
 //
-void ocp_nlp_initialize_qp(ocp_nlp_config *config, ocp_nlp_dims *dims, ocp_nlp_in *in,
+void ocp_nlp_initialize_submodules(ocp_nlp_config *config, ocp_nlp_dims *dims, ocp_nlp_in *in,
             ocp_nlp_out *out, ocp_nlp_opts *opts, ocp_nlp_memory *mem, ocp_nlp_workspace *work);
 //
 void ocp_nlp_approximate_qp_matrices(ocp_nlp_config *config, ocp_nlp_dims *dims, ocp_nlp_in *in,
@@ -416,6 +415,9 @@ void ocp_nlp_embed_initial_value(ocp_nlp_config *config, ocp_nlp_dims *dims, ocp
 //
 void ocp_nlp_update_variables_sqp(ocp_nlp_config *config, ocp_nlp_dims *dims, ocp_nlp_in *in,
            ocp_nlp_out *out, ocp_nlp_opts *opts, ocp_nlp_memory *mem, ocp_nlp_workspace *work, double alpha);
+//
+int ocp_nlp_precompute_common(ocp_nlp_config *config, ocp_nlp_dims *dims, ocp_nlp_in *in,
+            ocp_nlp_out *out, ocp_nlp_opts *opts, ocp_nlp_memory *mem, ocp_nlp_workspace *work);
 //
 double ocp_nlp_line_search(ocp_nlp_config *config, ocp_nlp_dims *dims, ocp_nlp_in *in,
             ocp_nlp_out *out, ocp_nlp_opts *opts, ocp_nlp_memory *mem, ocp_nlp_workspace *work,

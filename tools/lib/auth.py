@@ -26,17 +26,17 @@ import sys
 import pprint
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict
+from typing import Any
 from urllib.parse import parse_qs, urlencode
 
-from tools.lib.api import APIError, CommaApi, UnauthorizedError
-from tools.lib.auth_config import set_token, get_token
+from openpilot.tools.lib.api import APIError, CommaApi, UnauthorizedError
+from openpilot.tools.lib.auth_config import set_token, get_token
 
 PORT = 3000
 
 
 class ClientRedirectServer(HTTPServer):
-  query_params: Dict[str, Any] = {}
+  query_params: dict[str, Any] = {}
 
 
 class ClientRedirectHandler(BaseHTTPRequestHandler):
@@ -46,15 +46,15 @@ class ClientRedirectHandler(BaseHTTPRequestHandler):
       return
 
     query = self.path.split('?', 1)[-1]
-    query = parse_qs(query, keep_blank_values=True)
-    self.server.query_params = query
+    query_parsed = parse_qs(query, keep_blank_values=True)
+    self.server.query_params = query_parsed
 
     self.send_response(200)
     self.send_header('Content-type', 'text/plain')
     self.end_headers()
     self.wfile.write(b'Return to the CLI to continue')
 
-  def log_message(self, format, *args):  # pylint: disable=redefined-builtin
+  def log_message(self, *args):
     pass  # this prevent http server from dumping messages to stdout
 
 
@@ -86,13 +86,13 @@ def auth_redirect_link(method):
     })
     return 'https://github.com/login/oauth/authorize?' + urlencode(params)
   elif method == 'apple':
-      params.update({
-        'client_id': 'ai.comma.login',
-        'response_type': 'code',
-        'response_mode': 'form_post',
-        'scope': 'name email',
-      })
-      return 'https://appleid.apple.com/auth/authorize?' + urlencode(params)
+    params.update({
+      'client_id': 'ai.comma.login',
+      'response_type': 'code',
+      'response_mode': 'form_post',
+      'scope': 'name email',
+    })
+    return 'https://appleid.apple.com/auth/authorize?' + urlencode(params)
   else:
     raise NotImplementedError(f"no redirect implemented for method {method}")
 

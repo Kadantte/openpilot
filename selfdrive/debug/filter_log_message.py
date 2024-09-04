@@ -3,8 +3,7 @@ import argparse
 import json
 
 import cereal.messaging as messaging
-from tools.lib.robust_logreader import RobustLogReader as LogReader
-from tools.lib.route import Route
+from openpilot.tools.lib.logreader import LogReader
 
 LEVELS = {
   "DEBUG": 10,
@@ -46,33 +45,28 @@ def print_androidlog(t, msg):
 
 
 if __name__ == "__main__":
-
   parser = argparse.ArgumentParser()
+  parser.add_argument('--absolute', action='store_true')
   parser.add_argument('--level', default='DEBUG')
   parser.add_argument('--addr', default='127.0.0.1')
   parser.add_argument("route", type=str, nargs='*', help="route name + segment number for offline usage")
   args = parser.parse_args()
 
-  logs = None
-  if len(args.route):
-    r = Route(args.route[0])
-    logs = r.log_paths()
-
-  if len(args.route) == 2 and logs:
-    n = int(args.route[1])
-    logs = [logs[n]]
-
   min_level = LEVELS[args.level]
 
-  if logs:
-    for log in logs:
-      if log:
-        lr = LogReader(log)
-        for m in lr:
-          if m.which() == 'logMessage':
-            print_logmessage(m.logMonoTime, m.logMessage, min_level)
-          elif m.which() == 'androidLog':
-            print_androidlog(m.logMonoTime, m.androidLog)
+  if args.route:
+    st = None if not args.absolute else 0
+    for route in args.route:
+      lr = LogReader(route, sort_by_time=True)
+      for m in lr:
+        if st is None:
+          st = m.logMonoTime
+        if m.which() == 'logMessage':
+          print_logmessage(m.logMonoTime-st, m.logMessage, min_level)
+        elif m.which() == 'errorLogMessage':
+          print_logmessage(m.logMonoTime-st, m.errorLogMessage, min_level)
+        elif m.which() == 'androidLog':
+          print_androidlog(m.logMonoTime-st, m.androidLog)
   else:
     sm = messaging.SubMaster(['logMessage', 'androidLog'], addr=args.addr)
     while True:

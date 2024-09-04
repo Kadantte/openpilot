@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-# flake8: noqa
-# pylint: skip-file
-# type: ignore
-
 import time
+import random
 
 from cereal import car, log
 import cereal.messaging as messaging
-from common.realtime import DT_CTRL
-from selfdrive.car.honda.interface import CarInterface
-from selfdrive.controls.lib.events import ET, EVENTS, Events
-from selfdrive.controls.lib.alertmanager import AlertManager
+from opendbc.car.honda.interface import CarInterface
+from openpilot.common.realtime import DT_CTRL
+from openpilot.selfdrive.controls.lib.events import ET, Events
+from openpilot.selfdrive.controls.lib.alertmanager import AlertManager
+from openpilot.system.manager.process_config import managed_processes
 
-EventName = car.CarEvent.EventName
+EventName = car.OnroadEvent.EventName
+
+def randperc() -> float:
+  return 100. * random.random()
 
 def cycle_alerts(duration=200, is_metric=False):
   # all alerts
@@ -24,7 +25,8 @@ def cycle_alerts(duration=200, is_metric=False):
     (EventName.buttonCancel, ET.USER_DISABLE),
     (EventName.wrongGear, ET.NO_ENTRY),
 
-    (EventName.vehicleModelInvalid, ET.SOFT_DISABLE),
+    (EventName.locationdTemporaryError, ET.SOFT_DISABLE),
+    (EventName.paramsdTemporaryError, ET.SOFT_DISABLE),
     (EventName.accFaulted, ET.IMMEDIATE_DISABLE),
 
     # DM sequence
@@ -33,42 +35,82 @@ def cycle_alerts(duration=200, is_metric=False):
     (EventName.driverDistracted, ET.WARNING),
   ]
 
-  CP = CarInterface.get_params("HONDA CIVIC 2016")
-  sm = messaging.SubMaster(['deviceState', 'pandaStates', 'roadCameraState', 'modelV2', 'liveCalibration',
-                            'driverMonitoringState', 'longitudinalPlan', 'lateralPlan', 'liveLocationKalman'])
+  # debug alerts
+  alerts = [
+    #(EventName.highCpuUsage, ET.NO_ENTRY),
+    #(EventName.lowMemory, ET.PERMANENT),
+    #(EventName.overheat, ET.PERMANENT),
+    #(EventName.outOfSpace, ET.PERMANENT),
+    #(EventName.modeldLagging, ET.PERMANENT),
+    #(EventName.processNotRunning, ET.NO_ENTRY),
+    #(EventName.commIssue, ET.NO_ENTRY),
+    #(EventName.calibrationInvalid, ET.PERMANENT),
+    (EventName.cameraMalfunction, ET.PERMANENT),
+    (EventName.cameraFrameRate, ET.PERMANENT),
+  ]
 
-  pm = messaging.PubMaster(['controlsState', 'pandaStates', 'deviceState'])
+  cameras = ['roadCameraState', 'wideRoadCameraState', 'driverCameraState']
+
+  CS = car.CarState.new_message()
+  CP = CarInterface.get_non_essential_params("HONDA_CIVIC")
+  sm = messaging.SubMaster(['deviceState', 'pandaStates', 'roadCameraState', 'modelV2', 'liveCalibration',
+                            'driverMonitoringState', 'longitudinalPlan', 'livePose',
+                            'managerState'] + cameras)
+
+  pm = messaging.PubMaster(['selfdriveState', 'pandaStates', 'deviceState'])
 
   events = Events()
   AM = AlertManager()
 
   frame = 0
   while True:
-    current_alert_types = [ET.PERMANENT, ET.USER_DISABLE, ET.IMMEDIATE_DISABLE,
-                           ET.SOFT_DISABLE, ET.PRE_ENABLE, ET.NO_ENTRY,
-                           ET.ENABLE, ET.WARNING]
-
     for alert, et in alerts:
       events.clear()
       events.add(alert)
 
-      a = events.create_alerts([et, ], [CP, sm, is_metric, 0])
+      sm['deviceState'].freeSpacePercent = randperc()
+      sm['deviceState'].memoryUsagePercent = int(randperc())
+      sm['deviceState'].cpuTempC = [randperc() for _ in range(3)]
+      sm['deviceState'].gpuTempC = [randperc() for _ in range(3)]
+      sm['deviceState'].cpuUsagePercent = [int(randperc()) for _ in range(8)]
+      sm['modelV2'].frameDropPerc = randperc()
+
+      if random.random() > 0.25:
+        sm['modelV2'].velocity.x = [random.random(), ]
+      if random.random() > 0.25:
+        CS.vEgo = random.random()
+
+      procs = [p.get_process_state_msg() for p in managed_processes.values()]
+      random.shuffle(procs)
+      for i in range(random.randint(0, 10)):
+        procs[i].shouldBeRunning = True
+      sm['managerState'].processes = procs
+
+      sm['liveCalibration'].rpyCalib = [-1 * random.random() for _ in range(random.randint(0, 3))]
+
+      for s in sm.data.keys():
+        prob = 0.3 if s in cameras else 0.08
+        sm.alive[s] = random.random() > prob
+        sm.valid[s] = random.random() > prob
+        sm.freq_ok[s] = random.random() > prob
+
+      a = events.create_alerts([et, ], [CP, CS, sm, is_metric, 0])
       AM.add_many(frame, a)
-      AM.process_alerts(frame)
-      print(AM.alert)
+      alert = AM.process_alerts(frame, [])
+      print(alert)
       for _ in range(duration):
         dat = messaging.new_message()
-        dat.init('controlsState')
-        dat.controlsState.enabled = True
+        dat.init('selfdriveState')
+        dat.selfdriveState.enabled = False
 
-        dat.controlsState.alertText1 = AM.alert_text_1
-        dat.controlsState.alertText2 = AM.alert_text_2
-        dat.controlsState.alertSize = AM.alert_size
-        dat.controlsState.alertStatus = AM.alert_status
-        dat.controlsState.alertBlinkingRate = AM.alert_rate
-        dat.controlsState.alertType = AM.alert_type
-        dat.controlsState.alertSound = AM.audible_alert
-        pm.send('controlsState', dat)
+        if alert:
+          dat.selfdriveState.alertText1 = alert.alert_text_1
+          dat.selfdriveState.alertText2 = alert.alert_text_2
+          dat.selfdriveState.alertSize = alert.alert_size
+          dat.selfdriveState.alertStatus = alert.alert_status
+          dat.selfdriveState.alertType = alert.alert_type
+          dat.selfdriveState.alertSound = alert.audible_alert
+        pm.send('selfdriveState', dat)
 
         dat = messaging.new_message()
         dat.init('deviceState')

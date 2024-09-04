@@ -2,7 +2,7 @@
 
 #include <QFontDatabase>
 
-#include "selfdrive/hardware/hw.h"
+#include "system/hardware/hw.h"
 
 MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
   main_layout = new QStackedLayout(this);
@@ -38,16 +38,13 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
       closeSettings();
     }
   });
-  QObject::connect(&device, &Device::interactiveTimout, [=]() {
+  QObject::connect(device(), &Device::interactiveTimeout, [=]() {
     if (main_layout->currentWidget() == settingsWindow) {
       closeSettings();
     }
   });
 
   // load fonts
-  QFontDatabase::addApplicationFont("../assets/fonts/opensans_regular.ttf");
-  QFontDatabase::addApplicationFont("../assets/fonts/opensans_bold.ttf");
-  QFontDatabase::addApplicationFont("../assets/fonts/opensans_semibold.ttf");
   QFontDatabase::addApplicationFont("../assets/fonts/Inter-Black.ttf");
   QFontDatabase::addApplicationFont("../assets/fonts/Inter-Bold.ttf");
   QFontDatabase::addApplicationFont("../assets/fonts/Inter-ExtraBold.ttf");
@@ -56,6 +53,7 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
   QFontDatabase::addApplicationFont("../assets/fonts/Inter-Regular.ttf");
   QFontDatabase::addApplicationFont("../assets/fonts/Inter-SemiBold.ttf");
   QFontDatabase::addApplicationFont("../assets/fonts/Inter-Thin.ttf");
+  QFontDatabase::addApplicationFont("../assets/fonts/JetBrainsMono-Medium.ttf");
 
   // no outline to prevent the focus rectangle
   setStyleSheet(R"(
@@ -67,8 +65,9 @@ MainWindow::MainWindow(QWidget *parent) : QWidget(parent) {
   setAttribute(Qt::WA_NoSystemBackground);
 }
 
-void MainWindow::openSettings() {
+void MainWindow::openSettings(int index, const QString &param) {
   main_layout->setCurrentWidget(settingsWindow);
+  settingsWindow->setCurrentPanel(index, param);
 }
 
 void MainWindow::closeSettings() {
@@ -80,20 +79,20 @@ void MainWindow::closeSettings() {
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
-  const static QSet<QEvent::Type> evts({QEvent::MouseButtonPress, QEvent::MouseMove,
-                                 QEvent::TouchBegin, QEvent::TouchUpdate, QEvent::TouchEnd});
-
-  if (evts.contains(event->type())) {
-    device.resetInteractiveTimout();
-#ifdef QCOM
-    // filter out touches while in android activity
-    if (HardwareEon::launched_activity) {
-      HardwareEon::check_activity();
-      if (HardwareEon::launched_activity) {
-        return true;
-      }
+  bool ignore = false;
+  switch (event->type()) {
+    case QEvent::TouchBegin:
+    case QEvent::TouchUpdate:
+    case QEvent::TouchEnd:
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseMove: {
+      // ignore events when device is awakened by resetInteractiveTimeout
+      ignore = !device()->isAwake();
+      device()->resetInteractiveTimeout();
+      break;
     }
-#endif
+    default:
+      break;
   }
-  return false;
+  return ignore;
 }

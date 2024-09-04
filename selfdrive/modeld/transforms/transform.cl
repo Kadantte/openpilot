@@ -6,9 +6,9 @@
 #define INTER_REMAP_COEF_SCALE (1 << INTER_REMAP_COEF_BITS)
 
 __kernel void warpPerspective(__global const uchar * src,
-                              int src_step, int src_offset, int src_rows, int src_cols,
+                              int src_row_stride, int src_px_stride, int src_offset, int src_rows, int src_cols,
                               __global uchar * dst,
-                              int dst_step, int dst_offset, int dst_rows, int dst_cols,
+                              int dst_row_stride, int dst_offset, int dst_rows, int dst_cols,
                               __constant float * M)
 {
     int dx = get_global_id(0);
@@ -22,24 +22,24 @@ __kernel void warpPerspective(__global const uchar * src,
         W = W != 0.0f ? INTER_TAB_SIZE / W : 0.0f;
         int X = rint(X0 * W), Y = rint(Y0 * W);
 
-        short sx = convert_short_sat(X >> INTER_BITS);
-        short sy = convert_short_sat(Y >> INTER_BITS);
+        int sx = convert_short_sat(X >> INTER_BITS);
+        int sy = convert_short_sat(Y >> INTER_BITS);
+
+        short sx_clamp = clamp(sx, 0, src_cols - 1);
+        short sx_p1_clamp = clamp(sx + 1, 0, src_cols - 1);
+        short sy_clamp = clamp(sy, 0, src_rows - 1);
+        short sy_p1_clamp = clamp(sy + 1, 0, src_rows - 1);
+        int v0 = convert_int(src[mad24(sy_clamp, src_row_stride, src_offset + sx_clamp*src_px_stride)]);
+        int v1 = convert_int(src[mad24(sy_clamp, src_row_stride, src_offset + sx_p1_clamp*src_px_stride)]);
+        int v2 = convert_int(src[mad24(sy_p1_clamp, src_row_stride, src_offset + sx_clamp*src_px_stride)]);
+        int v3 = convert_int(src[mad24(sy_p1_clamp, src_row_stride, src_offset + sx_p1_clamp*src_px_stride)]);
+
         short ay = (short)(Y & (INTER_TAB_SIZE - 1));
         short ax = (short)(X & (INTER_TAB_SIZE - 1));
-
-        int v0 = (sx >= 0 && sx < src_cols && sy >= 0 && sy < src_rows) ?
-            convert_int(src[mad24(sy, src_step, src_offset + sx)]) : 0;
-        int v1 = (sx+1 >= 0 && sx+1 < src_cols && sy >= 0 && sy < src_rows) ?
-            convert_int(src[mad24(sy, src_step, src_offset + (sx+1))]) : 0;
-        int v2 = (sx >= 0 && sx < src_cols && sy+1 >= 0 && sy+1 < src_rows) ?
-            convert_int(src[mad24(sy+1, src_step, src_offset + sx)]) : 0;
-        int v3 = (sx+1 >= 0 && sx+1 < src_cols && sy+1 >= 0 && sy+1 < src_rows) ?
-            convert_int(src[mad24(sy+1, src_step, src_offset + (sx+1))]) : 0;
-
         float taby = 1.f/INTER_TAB_SIZE*ay;
         float tabx = 1.f/INTER_TAB_SIZE*ax;
 
-        int dst_index = mad24(dy, dst_step, dst_offset + dx);
+        int dst_index = mad24(dy, dst_row_stride, dst_offset + dx);
 
         int itab0 = convert_short_sat_rte( (1.0f-taby)*(1.0f-tabx) * INTER_REMAP_COEF_SCALE );
         int itab1 = convert_short_sat_rte( (1.0f-taby)*tabx * INTER_REMAP_COEF_SCALE );

@@ -4,21 +4,24 @@ import numpy as np
 
 from cereal import log
 import cereal.messaging as messaging
-from common.realtime import Ratekeeper, DT_MDL
-from selfdrive.controls.lib.longcontrol import LongCtrlState
-from selfdrive.controls.lib.longitudinal_planner import Planner
+from openpilot.common.realtime import Ratekeeper, DT_MDL
+from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
+from openpilot.selfdrive.modeld.constants import ModelConstants
+from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
+from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
 
 
-class Plant():
+class Plant:
   messaging_initialized = False
 
   def __init__(self, lead_relevancy=False, speed=0.0, distance_lead=2.0,
-               only_lead2=False, only_radar=False):
+               enabled=True, only_lead2=False, only_radar=False, e2e=False, personality=0, force_decel=False):
     self.rate = 1. / DT_MDL
 
     if not Plant.messaging_initialized:
       Plant.radar = messaging.pub_sock('radarState')
       Plant.controls_state = messaging.pub_sock('controlsState')
+      Plant.selfdrive_state = messaging.pub_sock('selfdriveState')
       Plant.car_state = messaging.pub_sock('carState')
       Plant.plan = messaging.sub_sock('longitudinalPlan')
       Plant.messaging_initialized = True
@@ -28,22 +31,29 @@ class Plant():
     self.distance = 0.
     self.speed = speed
     self.acceleration = 0.0
+    self.speeds = []
 
     # lead car
-    self.distance_lead = distance_lead
     self.lead_relevancy = lead_relevancy
-    self.only_lead2=only_lead2
-    self.only_radar=only_radar
+    self.distance_lead = distance_lead
+    self.enabled = enabled
+    self.only_lead2 = only_lead2
+    self.only_radar = only_radar
+    self.e2e = e2e
+    self.personality = personality
+    self.force_decel = force_decel
 
     self.rk = Ratekeeper(self.rate, print_delay_threshold=100.0)
     self.ts = 1. / self.rate
-    time.sleep(1)
+    time.sleep(0.1)
     self.sm = messaging.SubMaster(['longitudinalPlan'])
 
-    from selfdrive.car.honda.values import CAR
-    from selfdrive.car.honda.interface import CarInterface
-    self.planner = Planner(CarInterface.get_params(CAR.CIVIC), init_v=self.speed)
+    from opendbc.car.honda.values import CAR
+    from opendbc.car.honda.interface import CarInterface
 
+    self.planner = LongitudinalPlanner(CarInterface.get_non_essential_params(CAR.HONDA_CIVIC), init_v=self.speed)
+
+  @property
   def current_time(self):
     return float(self.rk.frame) / self.rate
 
@@ -52,7 +62,9 @@ class Plant():
     # note that this is worst case for MPC, since model will delay long mpc by one time step
     radar = messaging.new_message('radarState')
     control = messaging.new_message('controlsState')
+    ss = messaging.new_message('selfdriveState')
     car_state = messaging.new_message('carState')
+    model = messaging.new_message('modelV2')
     a_lead = (v_lead - self.v_lead_prev)/self.ts
     self.v_lead_prev = v_lead
 
@@ -73,31 +85,51 @@ class Plant():
 
     lead = log.RadarState.LeadData.new_message()
     lead.dRel = float(d_rel)
-    lead.yRel = float(0.0)
+    lead.yRel = 0.0
     lead.vRel = float(v_rel)
     lead.aRel = float(a_lead - self.acceleration)
     lead.vLead = float(v_lead)
     lead.vLeadK = float(v_lead)
     lead.aLeadK = float(a_lead)
-    lead.aLeadTau = float(1.5)
+    # TODO use real radard logic for this
+    lead.aLeadTau = float(_LEAD_ACCEL_TAU)
     lead.status = status
     lead.modelProb = float(prob)
     if not self.only_lead2:
       radar.radarState.leadOne = lead
     radar.radarState.leadTwo = lead
 
-    control.controlsState.longControlState = LongCtrlState.pid
-    control.controlsState.vCruise = float(v_cruise * 3.6)
+    # Simulate model predicting slightly faster speed
+    # this is to ensure lead policy is effective when model
+    # does not predict slowdown in e2e mode
+    position = log.XYZTData.new_message()
+    position.x = [float(x) for x in (self.speed + 0.5) * np.array(ModelConstants.T_IDXS)]
+    model.modelV2.position = position
+    velocity = log.XYZTData.new_message()
+    velocity.x = [float(x) for x in (self.speed + 0.5) * np.ones_like(ModelConstants.T_IDXS)]
+    model.modelV2.velocity = velocity
+    acceleration = log.XYZTData.new_message()
+    acceleration.x = [float(x) for x in np.zeros_like(ModelConstants.T_IDXS)]
+    model.modelV2.acceleration = acceleration
+
+    control.controlsState.longControlState = LongCtrlState.pid if self.enabled else LongCtrlState.off
+    ss.selfdriveState.experimentalMode = self.e2e
+    ss.selfdriveState.personality = self.personality
+    control.controlsState.forceDecel = self.force_decel
     car_state.carState.vEgo = float(self.speed)
     car_state.carState.standstill = self.speed < 0.01
+    car_state.carState.vCruise = float(v_cruise * 3.6)
 
     # ******** get controlsState messages for plotting ***
     sm = {'radarState': radar.radarState,
           'carState': car_state.carState,
-          'controlsState': control.controlsState}
+          'controlsState': control.controlsState,
+          'selfdriveState': ss.selfdriveState,
+          'modelV2': model.modelV2}
     self.planner.update(sm)
     self.speed = self.planner.v_desired_filter.x
     self.acceleration = self.planner.a_desired
+    self.speeds = self.planner.v_desired_trajectory.tolist()
     fcw = self.planner.fcw
     self.distance_lead = self.distance_lead + v_lead * self.ts
 
@@ -117,9 +149,9 @@ class Plant():
       v_rel = 0.
 
     # print at 5hz
-    if (self.rk.frame % (self.rate // 5)) == 0:
-      print("%2.2f sec   %6.2f m  %6.2f m/s  %6.2f m/s2   lead_rel: %6.2f m  %6.2f m/s"
-            % (self.current_time(), self.distance, self.speed, self.acceleration, d_rel, v_rel))
+    # if (self.rk.frame % (self.rate // 5)) == 0:
+    #   print("%2.2f sec   %6.2f m  %6.2f m/s  %6.2f m/s2   lead_rel: %6.2f m  %6.2f m/s"
+    #         % (self.current_time, self.distance, self.speed, self.acceleration, d_rel, v_rel))
 
 
     # ******** update prevs ********
@@ -129,6 +161,7 @@ class Plant():
       "distance": self.distance,
       "speed": self.speed,
       "acceleration": self.acceleration,
+      "speeds": self.speeds,
       "distance_lead": self.distance_lead,
       "fcw": fcw,
     }

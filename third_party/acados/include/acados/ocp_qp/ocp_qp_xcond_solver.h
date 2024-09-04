@@ -1,8 +1,5 @@
 /*
- * Copyright 2019 Gianluca Frison, Dimitris Kouzoupis, Robin Verschueren,
- * Andrea Zanelli, Niels van Duijkeren, Jonathan Frey, Tommaso Sartor,
- * Branimir Novoselnik, Rien Quirynen, Rezart Qelibari, Dang Doan,
- * Jonas Koenemann, Yutao Chen, Tobias Schöls, Jonas Schlagenhauf, Moritz Diehl
+ * Copyright (c) The acados authors.
  *
  * This file is part of acados.
  *
@@ -84,6 +81,7 @@ typedef struct
     acados_size_t (*dims_calculate_size)(void *config, int N);
     ocp_qp_xcond_solver_dims *(*dims_assign)(void *config, int N, void *raw_memory);
     void (*dims_set)(void *config_, ocp_qp_xcond_solver_dims *dims, int stage, const char *field, int* value);
+    void (*dims_get)(void *config_, ocp_qp_xcond_solver_dims *dims, int stage, const char *field, int* value);
     acados_size_t (*opts_calculate_size)(void *config, ocp_qp_xcond_solver_dims *dims);
     void *(*opts_assign)(void *config, ocp_qp_xcond_solver_dims *dims, void *raw_memory);
     void (*opts_initialize_default)(void *config, ocp_qp_xcond_solver_dims *dims, void *opts);
@@ -92,6 +90,7 @@ typedef struct
     acados_size_t (*memory_calculate_size)(void *config, ocp_qp_xcond_solver_dims *dims, void *opts);
     void *(*memory_assign)(void *config, ocp_qp_xcond_solver_dims *dims, void *opts, void *raw_memory);
     void (*memory_get)(void *config_, void *mem_, const char *field, void* value);
+    void (*memory_reset)(void *config, ocp_qp_xcond_solver_dims *dims, ocp_qp_in *qp_in, ocp_qp_out *qp_out, void *opts, void *mem, void *work);
     acados_size_t (*workspace_calculate_size)(void *config, ocp_qp_xcond_solver_dims *dims, void *opts);
     int (*evaluate)(void *config, ocp_qp_xcond_solver_dims *dims, ocp_qp_in *qp_in, ocp_qp_out *qp_out, void *opts, void *mem, void *work);
     void (*eval_sens)(void *config, ocp_qp_xcond_solver_dims *dims, ocp_qp_in *param_qp_in, ocp_qp_out *sens_qp_out, void *opts, void *mem, void *work);

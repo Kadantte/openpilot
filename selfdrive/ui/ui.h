@@ -2,110 +2,85 @@
 
 #include <memory>
 #include <string>
-#include <optional>
 
 #include <QObject>
 #include <QTimer>
 #include <QColor>
 #include <QFuture>
+#include <QPolygonF>
 #include <QTransform>
 
 #include "cereal/messaging/messaging.h"
-#include "selfdrive/common/modeldata.h"
-#include "selfdrive/common/params.h"
-#include "selfdrive/common/timing.h"
+#include "common/mat.h"
+#include "common/params.h"
+#include "common/timing.h"
+#include "system/hardware/hw.h"
 
-const int bdr_s = 30;
-const int header_h = 420;
-const int footer_h = 280;
+const int UI_BORDER_SIZE = 30;
+const int UI_HEADER_HEIGHT = 420;
 
-const int UI_FREQ = 20;   // Hz
-typedef cereal::CarControl::HUDControl::AudibleAlert AudibleAlert;
+const int UI_FREQ = 20; // Hz
+const int BACKLIGHT_OFFROAD = 50;
 
-// TODO: this is also hardcoded in common/transformations/camera.py
-// TODO: choose based on frame input size
-const float y_offset = Hardware::EON() ? 0.0 : 150.0;
-const float ZOOM = Hardware::EON() ? 2138.5 : 2912.8;
-
-struct Alert {
-  QString text1;
-  QString text2;
-  QString type;
-  cereal::ControlsState::AlertSize size;
-  AudibleAlert sound;
-
-  bool equal(const Alert &a2) {
-    return text1 == a2.text1 && text2 == a2.text2 && type == a2.type && sound == a2.sound;
-  }
-
-  static Alert get(const SubMaster &sm, uint64_t started_frame) {
-    const cereal::ControlsState::Reader &cs = sm["controlsState"].getControlsState();
-    if (sm.updated("controlsState")) {
-      return {cs.getAlertText1().cStr(), cs.getAlertText2().cStr(),
-              cs.getAlertType().cStr(), cs.getAlertSize(),
-              cs.getAlertSound()};
-    } else if ((sm.frame - started_frame) > 5 * UI_FREQ) {
-      const int CONTROLS_TIMEOUT = 5;
-      const int controls_missing = (nanos_since_boot() - sm.rcv_time("controlsState")) / 1e9;
-
-      // Handle controls timeout
-      if (sm.rcv_frame("controlsState") < started_frame) {
-        // car is started, but controlsState hasn't been seen at all
-        return {"openpilot Unavailable", "Waiting for controls to start",
-                "controlsWaiting", cereal::ControlsState::AlertSize::MID,
-                AudibleAlert::NONE};
-      } else if (controls_missing > CONTROLS_TIMEOUT) {
-        // car is started, but controls is lagging or died
-        if (cs.getEnabled() && (controls_missing - CONTROLS_TIMEOUT) < 10) {
-          return {"TAKE CONTROL IMMEDIATELY", "Controls Unresponsive",
-                  "controlsUnresponsive", cereal::ControlsState::AlertSize::FULL,
-                  AudibleAlert::WARNING_IMMEDIATE};
-        } else {
-          return {"Controls Unresponsive", "Reboot Device",
-                  "controlsUnresponsivePermanent", cereal::ControlsState::AlertSize::MID,
-                  AudibleAlert::NONE};
-        }
-      }
-    }
-    return {};
-  }
-};
+const float MIN_DRAW_DISTANCE = 10.0;
+const float MAX_DRAW_DISTANCE = 100.0;
+constexpr mat3 DEFAULT_CALIBRATION = {{ 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0 }};
+constexpr mat3 FCAM_INTRINSIC_MATRIX = (mat3){{2648.0, 0.0, 1928.0 / 2,
+                                           0.0, 2648.0, 1208.0 / 2,
+                                           0.0, 0.0, 1.0}};
+// tici ecam focal probably wrong? magnification is not consistent across frame
+// Need to retrain model before this can be changed
+constexpr mat3 ECAM_INTRINSIC_MATRIX = (mat3){{567.0, 0.0, 1928.0 / 2,
+                                           0.0, 567.0, 1208.0 / 2,
+                                           0.0, 0.0, 1.0}};
 
 typedef enum UIStatus {
   STATUS_DISENGAGED,
+  STATUS_OVERRIDE,
   STATUS_ENGAGED,
-  STATUS_WARNING,
-  STATUS_ALERT,
 } UIStatus;
 
-const QColor bg_colors [] = {
-  [STATUS_DISENGAGED] =  QColor(0x17, 0x33, 0x49, 0xc8),
-  [STATUS_ENGAGED] = QColor(0x17, 0x86, 0x44, 0xf1),
-  [STATUS_WARNING] = QColor(0xDA, 0x6F, 0x25, 0xf1),
-  [STATUS_ALERT] = QColor(0xC9, 0x22, 0x31, 0xf1),
+enum PrimeType {
+  PRIME_TYPE_UNKNOWN = -2,
+  PRIME_TYPE_UNPAIRED = -1,
+  PRIME_TYPE_NONE = 0,
+  PRIME_TYPE_MAGENTA = 1,
+  PRIME_TYPE_LITE = 2,
+  PRIME_TYPE_BLUE = 3,
+  PRIME_TYPE_MAGENTA_NEW = 4,
+  PRIME_TYPE_PURPLE = 5,
 };
 
-typedef struct {
-  QPointF v[TRAJECTORY_SIZE * 2];
-  int cnt;
-} line_vertices_data;
+const QColor bg_colors [] = {
+  [STATUS_DISENGAGED] = QColor(0x17, 0x33, 0x49, 0xc8),
+  [STATUS_OVERRIDE] = QColor(0x91, 0x9b, 0x95, 0xf1),
+  [STATUS_ENGAGED] = QColor(0x17, 0x86, 0x44, 0xf1),
+};
+
 
 typedef struct UIScene {
-  mat3 view_from_calib;
+  bool calibration_valid = false;
+  bool calibration_wide_valid  = false;
+  bool wide_cam = true;
+  mat3 view_from_calib = DEFAULT_CALIBRATION;
+  mat3 view_from_wide_calib = DEFAULT_CALIBRATION;
   cereal::PandaState::PandaType pandaType;
 
   // modelV2
   float lane_line_probs[4];
   float road_edge_stds[2];
-  line_vertices_data track_vertices;
-  line_vertices_data lane_line_vertices[4];
-  line_vertices_data road_edge_vertices[2];
+  QPolygonF track_vertices;
+  QPolygonF lane_line_vertices[4];
+  QPolygonF road_edge_vertices[2];
 
   // lead
   QPointF lead_vertices[2];
 
-  float light_sensor, accel_sensor, gyro_sensor;
-  bool started, ignition, is_metric, longitudinal_control, end_to_end;
+  cereal::LongitudinalPersonality personality;
+
+  float light_sensor = -1;
+  bool started, ignition, is_metric, longitudinal_control;
+  bool world_objects_visible = false;
   uint64_t started_frame;
 } UIScene;
 
@@ -115,12 +90,13 @@ class UIState : public QObject {
 public:
   UIState(QObject* parent = 0);
   void updateStatus();
-  inline bool worldObjectsVisible() const {
-    return sm->rcv_frame("liveCalibration") > scene.started_frame;
-  };
   inline bool engaged() const {
-    return scene.started && (*sm)["controlsState"].getControlsState().getEnabled();
-  };
+    return scene.started && (*sm)["selfdriveState"].getSelfdriveState().getEnabled();
+  }
+
+  void setPrimeType(PrimeType type);
+  inline PrimeType primeType() const { return prime_type; }
+  inline bool hasPrime() const { return prime_type > PrimeType::PRIME_TYPE_NONE; }
 
   int fb_w = 0, fb_h = 0;
 
@@ -129,15 +105,15 @@ public:
   UIStatus status;
   UIScene scene = {};
 
-  bool awake;
-  int prime_type = 0;
+  QString language;
 
   QTransform car_space_transform;
-  bool wide_camera;
 
 signals:
   void uiUpdate(const UIState &s);
   void offroadTransition(bool offroad);
+  void primeChanged(bool prime);
+  void primeTypeChanged(PrimeType prime_type);
 
 private slots:
   void update();
@@ -145,41 +121,52 @@ private slots:
 private:
   QTimer *timer;
   bool started_prev = false;
+  PrimeType prime_type = PrimeType::PRIME_TYPE_UNKNOWN;
 };
 
 UIState *uiState();
 
 // device management class
-
 class Device : public QObject {
   Q_OBJECT
 
 public:
   Device(QObject *parent = 0);
+  bool isAwake() { return awake; }
+  void setOffroadBrightness(int brightness) {
+    offroad_brightness = std::clamp(brightness, 0, 100);
+  }
 
 private:
-  // auto brightness
-  const float accel_samples = 5*UI_FREQ;
-
   bool awake = false;
   int interactive_timeout = 0;
   bool ignition_on = false;
+
+  int offroad_brightness = BACKLIGHT_OFFROAD;
   int last_brightness = 0;
   FirstOrderFilter brightness_filter;
   QFuture<void> brightness_future;
 
   void updateBrightness(const UIState &s);
   void updateWakefulness(const UIState &s);
-  bool motionTriggered(const UIState &s);
   void setAwake(bool on);
 
 signals:
   void displayPowerChanged(bool on);
-  void interactiveTimout();
+  void interactiveTimeout();
 
 public slots:
-  void resetInteractiveTimout();
+  void resetInteractiveTimeout(int timeout = -1);
   void update(const UIState &s);
 };
 
+Device *device();
+
 void ui_update_params(UIState *s);
+int get_path_length_idx(const cereal::XYZTData::Reader &line, const float path_height);
+void update_model(UIState *s,
+                  const cereal::ModelDataV2::Reader &model);
+void update_dmonitoring(UIState *s, const cereal::DriverStateV2::Reader &driverstate, float dm_fade_state, bool is_rhd);
+void update_leads(UIState *s, const cereal::RadarState::Reader &radar_state, const cereal::XYZTData::Reader &line);
+void update_line_data(const UIState *s, const cereal::XYZTData::Reader &line,
+                      float y_off, float z_off, QPolygonF *pvd, int max_idx, bool allow_invert);

@@ -1,8 +1,5 @@
 /*
- * Copyright 2019 Gianluca Frison, Dimitris Kouzoupis, Robin Verschueren,
- * Andrea Zanelli, Niels van Duijkeren, Jonathan Frey, Tommaso Sartor,
- * Branimir Novoselnik, Rien Quirynen, Rezart Qelibari, Dang Doan,
- * Jonas Koenemann, Yutao Chen, Tobias Schöls, Jonas Schlagenhauf, Moritz Diehl
+ * Copyright (c) The acados authors.
  *
  * This file is part of acados.
  *
@@ -35,6 +32,21 @@
 #ifndef ACADOS_UTILS_TYPES_H_
 #define ACADOS_UTILS_TYPES_H_
 
+/* Symbol visibility in DLLs */
+#ifndef ACADOS_SYMBOL_EXPORT
+  #if defined(_WIN32) || defined(__WIN32__) || defined(__CYGWIN__)
+    #if defined(STATIC_LINKED)
+      #define ACADOS_SYMBOL_EXPORT
+    #else
+      #define ACADOS_SYMBOL_EXPORT __declspec(dllexport)
+    #endif
+  #elif defined(__GNUC__) && ((__GNUC__ >= 4) || (__GNUC__ == 3 && __GNUC_MINOR__ >= 4))
+    #define ACADOS_SYMBOL_EXPORT __attribute__ ((visibility ("default")))
+  #else
+    #define ACADOS_SYMBOL_EXPORT
+  #endif
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,7 +75,7 @@ typedef int (*casadi_function_t)(const double** arg, double** res, int* iw, doub
 enum return_values
 {
     ACADOS_SUCCESS,
-    ACADOS_FAILURE,
+    ACADOS_NAN_DETECTED,
     ACADOS_MAXITER,
     ACADOS_MINSTEP,
     ACADOS_QP_FAILURE,

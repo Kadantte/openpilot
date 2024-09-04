@@ -6,7 +6,7 @@ firmware versions. If you want to try on a new radar make sure to note the defau
 in case it's different from the other radars and you need to revert the changes.
 
 After changing the config the car should not show any faults when openpilot is not running.
-These config changes are persistent accross car reboots. You need to run this script again
+These config changes are persistent across car reboots. You need to run this script again
 to go back to the default values.
 
 USE AT YOUR OWN RISK! Safety features, like AEB and FCW, might be affected by these changes."""
@@ -32,7 +32,13 @@ SUPPORTED_FW_VERSIONS = {
   b"DN8_ SCC FHCUP      1.00 1.00 99110-L0000\x19\x08)\x15T    ": ConfigValues(
     default_config=b"\x00\x00\x00\x01\x00\x00",
     tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
+  b"DN8_ SCC F-CUP      1.00 1.00 99110-L0000\x19\x08)\x15T    ": ConfigValues(
+    default_config=b"\x00\x00\x00\x01\x00\x00",
+    tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
   # 2021 SONATA HYBRID
+  b"DNhe SCC FHCUP      1.00 1.00 99110-L5000\x19\x04&\x13'    ": ConfigValues(
+    default_config=b"\x00\x00\x00\x01\x00\x00",
+    tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
   b"DNhe SCC FHCUP      1.00 1.02 99110-L5000 \x01#\x15#    ": ConfigValues(
     default_config=b"\x00\x00\x00\x01\x00\x00",
     tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
@@ -52,6 +58,17 @@ SUPPORTED_FW_VERSIONS = {
   b'IK__ SCC F-CUP      1.00 1.02 96400-G9100\x18\x07\x06\x17\x12    ': ConfigValues(
     default_config=b"\x00\x00\x00\x01\x00\x00",
     tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
+  # 2019 SANTA FE
+  b"TM__ SCC F-CUP      1.00 1.00 99110-S1210\x19\x01%\x168    ": ConfigValues(
+    default_config=b"\x00\x00\x00\x01\x00\x00",
+    tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
+  b"TM__ SCC F-CUP      1.00 1.02 99110-S2000\x18\x07\x08\x18W    ": ConfigValues(
+    default_config=b"\x00\x00\x00\x01\x00\x00",
+    tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
+  # 2021 K5 HEV
+  b"DLhe SCC FHCUP      1.00 1.02 99110-L7000 \x01 \x102    ": ConfigValues(
+    default_config=b"\x00\x00\x00\x01\x00\x00",
+    tracks_enabled=b"\x00\x00\x00\x01\x00\x01"),
 }
 
 if __name__ == "__main__":
@@ -62,11 +79,11 @@ if __name__ == "__main__":
   args = parser.parse_args()
 
   try:
-    check_output(["pidof", "boardd"])
-    print("boardd is running, please kill openpilot before running this script! (aborted)")
+    check_output(["pidof", "pandad"])
+    print("pandad is running, please kill openpilot before running this script! (aborted)")
     sys.exit(1)
   except CalledProcessError as e:
-    if e.returncode != 1: # 1 == no process found (boardd not running)
+    if e.returncode != 1: # 1 == no process found (pandad not running)
       raise e
 
   confirm = input("power on the vehicle keeping the engine off (press start button twice) then type OK to continue: ").upper().strip()
@@ -74,7 +91,7 @@ if __name__ == "__main__":
     print("\nyou didn't type 'OK! (aborted)")
     sys.exit(0)
 
-  panda = Panda() # type: ignore
+  panda = Panda()
   panda.set_safety_mode(Panda.SAFETY_ELM327)
   uds_client = UdsClient(panda, 0x7D0, bus=args.bus, debug=args.debug)
 

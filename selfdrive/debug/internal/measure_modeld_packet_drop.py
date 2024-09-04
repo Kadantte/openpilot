@@ -5,7 +5,7 @@ if __name__ == "__main__":
   modeld_sock = messaging.sub_sock("modelV2")
 
   last_frame_id = None
-  start_t = None
+  start_t: int | None = None
   frame_cnt = 0
   dropped = 0
 

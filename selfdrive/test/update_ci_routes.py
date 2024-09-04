@@ -1,53 +1,55 @@
 #!/usr/bin/env python3
-import sys
+import os
+import re
 import subprocess
-from azure.storage.blob import BlockBlobService  # pylint: disable=import-error
+import sys
+from collections.abc import Iterable
 
-from selfdrive.car.tests.routes import routes as test_car_models_routes
-from selfdrive.test.process_replay.test_processes import original_segments as replay_segments
-from xx.chffr.lib import azureutil  # pylint: disable=import-error
-from xx.chffr.lib.storage import _DATA_ACCOUNT_PRODUCTION, _DATA_ACCOUNT_CI, _DATA_BUCKET_PRODUCTION  # pylint: disable=import-error
+from tqdm import tqdm
 
-SOURCES = [
-  (_DATA_ACCOUNT_PRODUCTION, _DATA_BUCKET_PRODUCTION),
-  (_DATA_ACCOUNT_PRODUCTION, "preserve"),
-  (_DATA_ACCOUNT_CI, "commadataci"),
+from opendbc.car.tests.routes import routes as test_car_models_routes
+from openpilot.selfdrive.test.process_replay.test_processes import source_segments as replay_segments
+from openpilot.tools.lib.azure_container import AzureContainer
+from openpilot.tools.lib.openpilotcontainers import DataCIContainer, DataProdContainer, OpenpilotCIContainer
+
+SOURCES: list[AzureContainer] = [
+  DataProdContainer,
+  DataCIContainer
 ]
 
-DEST_KEY = azureutil.get_user_token(_DATA_ACCOUNT_CI, "openpilotci")
-SOURCE_KEYS = [azureutil.get_user_token(account, bucket) for account, bucket in SOURCES]
-SERVICE = BlockBlobService(_DATA_ACCOUNT_CI, sas_token=DEST_KEY)
+DEST = OpenpilotCIContainer
 
-def upload_route(path):
+def upload_route(path: str, exclude_patterns: Iterable[str] = None) -> None:
+  if exclude_patterns is None:
+    exclude_patterns = [r'dcamera\.hevc']
+
   r, n = path.rsplit("--", 1)
+  r = '/'.join(r.split('/')[-2:])  # strip out anything extra in the path
   destpath = f"{r}/{n}"
-  cmd = [
-    "azcopy",
-    "copy",
-    f"{path}/*",
-    f"https://{_DATA_ACCOUNT_CI}.blob.core.windows.net/openpilotci/{destpath}?{DEST_KEY}",
-    "--recursive=false",
-    "--overwrite=false",
-    "--exclude-pattern=*/dcamera.hevc",
-    "--exclude-pattern=*.mkv",
-  ]
-  subprocess.check_call(cmd)
+  for file in os.listdir(path):
+    if any(re.search(pattern, file) for pattern in exclude_patterns):
+      continue
+    DEST.upload_file(os.path.join(path, file), f"{destpath}/{file}")
 
-def sync_to_ci_public(route):
+
+def sync_to_ci_public(route: str) -> bool:
+  dest_container, dest_key = DEST.get_client_and_key()
   key_prefix = route.replace('|', '/')
   dongle_id = key_prefix.split('/')[0]
 
-  if next(azureutil.list_all_blobs(SERVICE, "openpilotci", prefix=key_prefix), None) is not None:
+  if next(dest_container.list_blob_names(name_starts_with=key_prefix), None) is not None:
     return True
 
   print(f"Uploading {route}")
-  for (source_account, source_bucket), source_key in zip(SOURCES, SOURCE_KEYS):
-    print(f"Trying {source_account}/{source_bucket}")
+  for source_container in SOURCES:
+    # assumes az login has been run
+    print(f"Trying {source_container.ACCOUNT}/{source_container.CONTAINER}")
+    _, source_key = source_container.get_client_and_key()
     cmd = [
       "azcopy",
       "copy",
-      f"https://{source_account}.blob.core.windows.net/{source_bucket}/{key_prefix}?{source_key}",
-      f"https://{_DATA_ACCOUNT_CI}.blob.core.windows.net/openpilotci/{dongle_id}?{DEST_KEY}",
+      f"{source_container.BASE_URL}{key_prefix}?{source_key}",
+      f"{DEST.BASE_URL}{dongle_id}?{dest_key}",
       "--recursive=true",
       "--overwrite=false",
       "--exclude-pattern=*/dcamera.hevc",
@@ -70,11 +72,11 @@ if __name__ == "__main__":
   to_sync = sys.argv[1:]
 
   if not len(to_sync):
-    # sync routes from test_routes and process replay
+    # sync routes from the car tests routes and process replay
     to_sync.extend([rt.route for rt in test_car_models_routes])
     to_sync.extend([s[1].rsplit('--', 1)[0] for s in replay_segments])
 
-  for r in to_sync:
+  for r in tqdm(to_sync):
     if not sync_to_ci_public(r):
       failed_routes.append(r)
 
